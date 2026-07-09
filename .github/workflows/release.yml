@@ -30,6 +30,7 @@ env:
   DOTNET_VERSION: "8.0.x"
   PROJECT_PATH: src/OmniWatch.SensorHost/OmniWatch.SensorHost.csproj
   ARTIFACT_BASENAME: omniwatch-sensor-host-win-x64
+  EXE_BASENAME: OmniWatch.SensorHost
 
 jobs:
   build:
@@ -81,9 +82,17 @@ jobs:
       - name: 整理发布目录
         shell: pwsh
         run: |
+          $version = "${{ steps.version.outputs.version }}"
           $stage = "dist/${{ env.ARTIFACT_BASENAME }}-${{ steps.version.outputs.version }}"
           New-Item -ItemType Directory -Force -Path $stage | Out-Null
           Copy-Item -Path "publish/win-x64/*" -Destination $stage -Recurse -Force
+          $sourceExe = Join-Path $stage "${{ env.EXE_BASENAME }}.exe"
+          $versionedExe = Join-Path $stage "${{ env.EXE_BASENAME }}-$version.exe"
+          if (Test-Path $sourceExe) {
+            Move-Item -Path $sourceExe -Destination $versionedExe -Force
+          } else {
+            throw "未找到发布后的可执行文件：$sourceExe"
+          }
           Copy-Item -Path "python" -Destination "$stage/python" -Recurse -Force
           Copy-Item -Path "README.md" -Destination "$stage/README.md" -Force
           if (Test-Path "LICENSE") {
