@@ -29,18 +29,23 @@ internal sealed class SensorPipeServer
     public async Task<int> RunAsync(CancellationToken cancellationToken)
     {
         var shouldStop = false;
-        try
+        while (!cancellationToken.IsCancellationRequested && !shouldStop)
         {
-            while (!cancellationToken.IsCancellationRequested && !shouldStop)
+            try
             {
                 await using var pipe = CreatePipe();
                 await pipe.WaitForConnectionAsync(cancellationToken).ConfigureAwait(false);
                 shouldStop = await HandleClientAsync(pipe, cancellationToken).ConfigureAwait(false);
             }
-        }
-        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
-        {
-            return 0;
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                return 0;
+            }
+            catch (Exception) when (!cancellationToken.IsCancellationRequested)
+            {
+                // 单个客户端或单次管道连接异常不应导致宿主进程退出。
+                await DelayAfterClientFailureAsync(cancellationToken).ConfigureAwait(false);
+            }
         }
 
         return 0;
@@ -65,38 +70,76 @@ internal sealed class SensorPipeServer
     private async Task<bool> HandleClientAsync(Stream pipe, CancellationToken cancellationToken)
     {
         using var reader = new StreamReader(pipe, new UTF8Encoding(false), detectEncodingFromByteOrderMarks: false, leaveOpen: true);
-        await using var writer = new StreamWriter(pipe, new UTF8Encoding(false), leaveOpen: true)
+
+        try
         {
-            AutoFlush = true,
-            NewLine = "\n",
-        };
+            while (!cancellationToken.IsCancellationRequested)
+            {
+                var line = await reader.ReadLineAsync(cancellationToken).ConfigureAwait(false);
+                if (line is null)
+                {
+                    return false;
+                }
 
-        while (!cancellationToken.IsCancellationRequested)
+                var response = HandleRequest(line, out var shouldStop);
+                var responseJson = SerializeResponse(response);
+                if (!await TryWriteLineAsync(pipe, responseJson, cancellationToken).ConfigureAwait(false))
+                {
+                    return false;
+                }
+
+                if (shouldStop)
+                {
+                    return true;
+                }
+            }
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
-            var line = await reader.ReadLineAsync(cancellationToken).ConfigureAwait(false);
-            if (line is null)
-            {
-                return false;
-            }
-
-            var response = HandleRequest(line, out var shouldStop);
-            var responseJson = SerializeResponse(response);
-            try
-            {
-                await writer.WriteLineAsync(responseJson).ConfigureAwait(false);
-            }
-            catch (IOException)
-            {
-                return false;
-            }
-
-            if (shouldStop)
-            {
-                return true;
-            }
+            return false;
+        }
+        catch (Exception) when (!cancellationToken.IsCancellationRequested)
+        {
+            return false;
         }
 
         return false;
+    }
+
+    /// <summary>
+    /// 向管道写入一行 UTF-8 JSON，客户端断开时返回失败而不是抛出异常。
+    /// </summary>
+    private static async Task<bool> TryWriteLineAsync(Stream pipe, string line, CancellationToken cancellationToken)
+    {
+        try
+        {
+            var bytes = Encoding.UTF8.GetBytes(line + "\n");
+            await pipe.WriteAsync(bytes, cancellationToken).ConfigureAwait(false);
+            await pipe.FlushAsync(cancellationToken).ConfigureAwait(false);
+            return true;
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            return false;
+        }
+        catch (Exception) when (!cancellationToken.IsCancellationRequested)
+        {
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// 客户端异常后短暂退避，避免异常风暴导致 CPU 忙等。
+    /// </summary>
+    private static async Task DelayAfterClientFailureAsync(CancellationToken cancellationToken)
+    {
+        try
+        {
+            await Task.Delay(TimeSpan.FromMilliseconds(50), cancellationToken).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+        }
     }
 
     /// <summary>
