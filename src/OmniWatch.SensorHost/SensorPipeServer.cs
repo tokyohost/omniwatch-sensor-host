@@ -29,11 +29,18 @@ internal sealed class SensorPipeServer
     public async Task<int> RunAsync(CancellationToken cancellationToken)
     {
         var shouldStop = false;
-        while (!cancellationToken.IsCancellationRequested && !shouldStop)
+        try
         {
-            await using var pipe = CreatePipe();
-            await pipe.WaitForConnectionAsync(cancellationToken).ConfigureAwait(false);
-            shouldStop = await HandleClientAsync(pipe, cancellationToken).ConfigureAwait(false);
+            while (!cancellationToken.IsCancellationRequested && !shouldStop)
+            {
+                await using var pipe = CreatePipe();
+                await pipe.WaitForConnectionAsync(cancellationToken).ConfigureAwait(false);
+                shouldStop = await HandleClientAsync(pipe, cancellationToken).ConfigureAwait(false);
+            }
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            return 0;
         }
 
         return 0;
@@ -73,7 +80,16 @@ internal sealed class SensorPipeServer
             }
 
             var response = HandleRequest(line, out var shouldStop);
-            await writer.WriteLineAsync(JsonSerializer.Serialize(response, _jsonOptions)).ConfigureAwait(false);
+            var responseJson = SerializeResponse(response);
+            try
+            {
+                await writer.WriteLineAsync(responseJson).ConfigureAwait(false);
+            }
+            catch (IOException)
+            {
+                return false;
+            }
+
             if (shouldStop)
             {
                 return true;
@@ -108,6 +124,22 @@ internal sealed class SensorPipeServer
         catch (Exception error)
         {
             return PipeResponse.Failure("host_error", error.Message);
+        }
+    }
+
+    /// <summary>
+    /// 序列化响应对象，避免异常传感器值导致宿主进程退出。
+    /// </summary>
+    private string SerializeResponse(PipeResponse response)
+    {
+        try
+        {
+            return JsonSerializer.Serialize(response, _jsonOptions);
+        }
+        catch (Exception error) when (error is ArgumentException or JsonException or NotSupportedException)
+        {
+            var failure = PipeResponse.Failure("serialize_error", $"响应序列化失败：{error.Message}");
+            return JsonSerializer.Serialize(failure, _jsonOptions);
         }
     }
 

@@ -20,7 +20,7 @@ internal sealed class UpdateVisitor : IVisitor
     /// </summary>
     public void VisitHardware(IHardware hardware)
     {
-        hardware.Update();
+        TryUpdateHardware(hardware);
         foreach (var subHardware in hardware.SubHardware)
         {
             subHardware.Accept(this);
@@ -39,5 +39,20 @@ internal sealed class UpdateVisitor : IVisitor
     /// </summary>
     public void VisitParameter(IParameter parameter)
     {
+    }
+
+    /// <summary>
+    /// 安全刷新单个硬件节点，忽略驱动层偶发读取异常。
+    /// </summary>
+    private static void TryUpdateHardware(IHardware hardware)
+    {
+        try
+        {
+            hardware.Update();
+        }
+        catch (Exception)
+        {
+            // 部分硬件驱动会偶发抛出读取异常，保留其余传感器继续采集。
+        }
     }
 }

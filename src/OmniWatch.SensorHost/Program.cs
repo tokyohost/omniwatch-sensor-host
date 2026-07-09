@@ -28,11 +28,29 @@ if (options.Once)
 }
 
 using var cancellation = new CancellationTokenSource();
-Console.CancelKeyPress += (_, eventArgs) =>
+ConsoleCancelEventHandler cancelHandler = (_, eventArgs) =>
 {
     eventArgs.Cancel = true;
-    cancellation.Cancel();
+    try
+    {
+        if (!cancellation.IsCancellationRequested)
+        {
+            cancellation.Cancel();
+        }
+    }
+    catch (ObjectDisposedException)
+    {
+        // 退出阶段可能已释放取消源，此时忽略重复取消信号。
+    }
 };
+Console.CancelKeyPress += cancelHandler;
 
-var server = new SensorPipeServer(options.PipeName, service, jsonOptions);
-return await server.RunAsync(cancellation.Token);
+try
+{
+    var server = new SensorPipeServer(options.PipeName, service, jsonOptions);
+    return await server.RunAsync(cancellation.Token);
+}
+finally
+{
+    Console.CancelKeyPress -= cancelHandler;
+}

@@ -135,7 +135,7 @@ internal sealed class SensorSnapshotService : IDisposable
             TemperatureC = FindFirstValue(cpuSensors, SensorType.Temperature, "CPU Package", "CPU Tctl/Tdie", "Core Max")
                 ?? AverageSensorValue(cpuSensors, SensorType.Temperature, "CPU Core"),
             PowerWatts = FindFirstValue(cpuSensors, SensorType.Power, "CPU Package", "Package"),
-            SensorCount = sensors.Count(sensor => sensor.Value.HasValue),
+            SensorCount = sensors.Count(sensor => IsFinite(sensor.Value)),
         };
     }
 
@@ -150,7 +150,7 @@ internal sealed class SensorSnapshotService : IDisposable
             Percent = FindFirstValue(memorySensors, SensorType.Load, "Memory"),
             UsedBytes = ToBytes(FindFirstValue(memorySensors, SensorType.Data, "Memory Used")),
             AvailableBytes = ToBytes(FindFirstValue(memorySensors, SensorType.Data, "Memory Available")),
-            SensorCount = memorySensors.Count(sensor => sensor.Value.HasValue),
+            SensorCount = memorySensors.Count(sensor => IsFinite(sensor.Value)),
         };
     }
 
@@ -226,7 +226,7 @@ internal sealed class SensorSnapshotService : IDisposable
             Name = hardware.Name,
             Type = hardware.HardwareType.ToString(),
             Sensors = hardware.Sensors
-                .Where(sensor => sensor.Value.HasValue)
+                .Where(sensor => IsFinite(sensor.Value))
                 .Select(sensor => new SensorValue
                 {
                     Name = sensor.Name,
@@ -268,13 +268,13 @@ internal sealed class SensorSnapshotService : IDisposable
     /// </summary>
     private static double? FindSensorValue(IEnumerable<ISensor> sensors, SensorType type, string name)
     {
-        var exact = sensors.FirstOrDefault(sensor => sensor.SensorType == type && sensor.Name.Equals(name, StringComparison.OrdinalIgnoreCase) && sensor.Value.HasValue);
+        var exact = sensors.FirstOrDefault(sensor => sensor.SensorType == type && sensor.Name.Equals(name, StringComparison.OrdinalIgnoreCase) && IsFinite(sensor.Value));
         if (exact?.Value is { } exactValue)
         {
             return Round(exactValue);
         }
 
-        var partial = sensors.FirstOrDefault(sensor => sensor.SensorType == type && sensor.Name.Contains(name, StringComparison.OrdinalIgnoreCase) && sensor.Value.HasValue);
+        var partial = sensors.FirstOrDefault(sensor => sensor.SensorType == type && sensor.Name.Contains(name, StringComparison.OrdinalIgnoreCase) && IsFinite(sensor.Value));
         return partial?.Value is { } partialValue ? Round(partialValue) : null;
     }
 
@@ -282,35 +282,69 @@ internal sealed class SensorSnapshotService : IDisposable
     /// 计算指定类型和名称片段传感器的平均值。
     /// </summary>
     private static double? AverageSensorValue(IEnumerable<ISensor> sensors, SensorType type, string name)
-	{
-	var values = sensors
-   	 .Where(sensor =>
-   	     sensor.SensorType == type &&
-   	     sensor.Name.Contains(name, StringComparison.OrdinalIgnoreCase) &&
-  	      sensor.Value.HasValue)
-  	  .Select(sensor => sensor.Value!.Value)
-  	  .ToList();
+    {
+        var values = sensors
+            .Where(sensor =>
+                sensor.SensorType == type &&
+                sensor.Name.Contains(name, StringComparison.OrdinalIgnoreCase) &&
+                IsFinite(sensor.Value))
+            .Select(sensor => sensor.Value!.Value)
+            .ToList();
 
-	return values.Count > 0
- 	   ? Round(values.Average())
- 	   : null;
-	}
+        return values.Count > 0
+            ? Round(values.Average())
+            : null;
+    }
 
     /// <summary>
     /// 把 LibreHardwareMonitor 的 GB/MB 近似数据转换为字节。
     /// </summary>
     private static long? ToBytes(double? value)
     {
-        return value.HasValue ? Convert.ToInt64(value.Value * 1024 * 1024 * 1024) : null;
+        if (!IsFinite(value))
+        {
+            return null;
+        }
+
+        var bytes = value.Value * 1024 * 1024 * 1024;
+        return double.IsFinite(bytes) && bytes is >= 0 and <= long.MaxValue
+            ? Convert.ToInt64(bytes)
+            : null;
     }
 
     /// <summary>
-    /// 统一浮点数精度。
+    /// 判断传感器浮点值是否可用于标准 JSON。
+    /// </summary>
+    private static bool IsFinite(float? value)
+    {
+        return value.HasValue && float.IsFinite(value.Value);
+    }
+
+    /// <summary>
+    /// 判断计算后的浮点值是否可用于标准 JSON。
+    /// </summary>
+    private static bool IsFinite(double? value)
+    {
+        return value.HasValue && double.IsFinite(value.Value);
+    }
+
+    /// <summary>
+    /// 统一浮点数精度，并丢弃 NaN 和 Infinity。
     /// </summary>
     private static double? Round(float? value)
     {
-        return value.HasValue
+        return IsFinite(value)
             ? Math.Round((double)value.Value, 2)
+            : null;
+    }
+
+    /// <summary>
+    /// 统一计算后浮点数精度，并丢弃 NaN 和 Infinity。
+    /// </summary>
+    private static double? Round(double? value)
+    {
+        return IsFinite(value)
+            ? Math.Round(value.Value, 2)
             : null;
     }
 }
