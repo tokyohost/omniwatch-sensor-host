@@ -307,13 +307,4 @@ internal sealed class SensorSnapshotService : IDisposable
             ? Math.Round((double)value.Value, 2)
             : null;
     }
-
-    /// <summary>
-    /// 统一普通计算结果浮点数精度。
-    /// </summary>
-    private static double? Round(double value)
-    {
-        return Math.Round(value, 2);
-    }
-
 }
