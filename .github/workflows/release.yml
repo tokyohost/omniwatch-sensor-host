@@ -55,7 +55,7 @@ jobs:
           } elseif ($env:GITHUB_REF_TYPE -eq "tag") {
             $version = $env:GITHUB_REF_NAME
           } else {
-            $version = "build-$env:GITHUB_RUN_NUMBER"
+            $version = "$env:GITHUB_RUN_NUMBER"
           }
           $semver = $version.TrimStart("v")
           "version=$version" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
