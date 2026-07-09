@@ -282,13 +282,19 @@ internal sealed class SensorSnapshotService : IDisposable
     /// 计算指定类型和名称片段传感器的平均值。
     /// </summary>
     private static double? AverageSensorValue(IEnumerable<ISensor> sensors, SensorType type, string name)
-    {
-        var values = sensors
-            .Where(sensor => sensor.SensorType == type && sensor.Name.Contains(name, StringComparison.OrdinalIgnoreCase) && sensor.Value.HasValue)
-            .Select(sensor => (double)sensor.Value!.Value)
-            .ToList();
-        return values.Count > 0 ? Round(values.Average()) : null;
-    }
+	{
+	var values = sensors
+   	 .Where(sensor =>
+   	     sensor.SensorType == type &&
+   	     sensor.Name.Contains(name, StringComparison.OrdinalIgnoreCase) &&
+  	      sensor.Value.HasValue)
+  	  .Select(sensor => sensor.Value!.Value)
+  	  .ToList();
+
+	return values.Count > 0
+ 	   ? Round(values.Average())
+ 	   : null;
+	}
 
     /// <summary>
     /// 把 LibreHardwareMonitor 的 GB/MB 近似数据转换为字节。
