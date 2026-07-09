@@ -1,0 +1,129 @@
+name: 发布 SensorHost
+
+on:
+  push:
+    branches:
+      - main
+      - master
+    tags:
+      - "v*"
+  pull_request:
+    branches:
+      - main
+      - master
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "发布版本号，例如 v1.0.0；留空时使用当前 run 编号"
+        required: false
+        type: string
+      create_release:
+        description: "是否创建 GitHub Release"
+        required: true
+        default: true
+        type: boolean
+
+permissions:
+  contents: write
+
+env:
+  DOTNET_VERSION: "8.0.x"
+  PROJECT_PATH: src/OmniWatch.SensorHost/OmniWatch.SensorHost.csproj
+  ARTIFACT_BASENAME: omniwatch-sensor-host-win-x64
+
+jobs:
+  build:
+    name: 构建与打包
+    runs-on: windows-latest
+
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      - name: 安装 .NET SDK
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: ${{ env.DOTNET_VERSION }}
+
+      - name: 计算版本号
+        id: version
+        shell: pwsh
+        run: |
+          $manualVersion = "${{ inputs.version }}"
+          if ($manualVersion) {
+            $version = $manualVersion
+          } elseif ($env:GITHUB_REF_TYPE -eq "tag") {
+            $version = $env:GITHUB_REF_NAME
+          } else {
+            $version = "build-$env:GITHUB_RUN_NUMBER"
+          }
+          $semver = $version.TrimStart("v")
+          "version=$version" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+          "semver=$semver" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+
+      - name: 还原依赖
+        run: dotnet restore OmniWatch.SensorHost.sln
+
+      - name: 编译项目
+        run: dotnet build OmniWatch.SensorHost.sln --configuration Release --no-restore -p:Version=${{ steps.version.outputs.semver }}
+
+      - name: 发布 win-x64
+        run: >
+          dotnet publish ${{ env.PROJECT_PATH }}
+          --configuration Release
+          --runtime win-x64
+          --self-contained true
+          --output publish/win-x64
+          -p:PublishSingleFile=true
+          -p:IncludeNativeLibrariesForSelfExtract=true
+          -p:Version=${{ steps.version.outputs.semver }}
+
+      - name: 整理发布目录
+        shell: pwsh
+        run: |
+          $stage = "dist/${{ env.ARTIFACT_BASENAME }}-${{ steps.version.outputs.version }}"
+          New-Item -ItemType Directory -Force -Path $stage | Out-Null
+          Copy-Item -Path "publish/win-x64/*" -Destination $stage -Recurse -Force
+          Copy-Item -Path "python" -Destination "$stage/python" -Recurse -Force
+          Copy-Item -Path "README.md" -Destination "$stage/README.md" -Force
+          if (Test-Path "LICENSE") {
+            Copy-Item -Path "LICENSE" -Destination "$stage/LICENSE" -Force
+          }
+
+      - name: 压缩发布包
+        shell: pwsh
+        run: |
+          $package = "${{ env.ARTIFACT_BASENAME }}-${{ steps.version.outputs.version }}.zip"
+          Compress-Archive -Path "dist/${{ env.ARTIFACT_BASENAME }}-${{ steps.version.outputs.version }}" -DestinationPath $package -Force
+          $hash = Get-FileHash -Path $package -Algorithm SHA256
+          "$($hash.Hash)  $package" | Out-File -FilePath "$package.sha256" -Encoding ascii
+
+      - name: 上传构建产物
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.ARTIFACT_BASENAME }}-${{ steps.version.outputs.version }}
+          path: |
+            ${{ env.ARTIFACT_BASENAME }}-${{ steps.version.outputs.version }}.zip
+            ${{ env.ARTIFACT_BASENAME }}-${{ steps.version.outputs.version }}.zip.sha256
+          if-no-files-found: error
+
+      - name: 创建 GitHub Release
+        if: startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && inputs.create_release)
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $version = "${{ steps.version.outputs.version }}"
+          $package = "${{ env.ARTIFACT_BASENAME }}-$version.zip"
+          $notes = @"
+          ## OmniWatch SensorHost $version
+
+          - Windows x64 自包含发布包。
+          - 包含 SensorHost 可执行文件、Python Named Pipe 客户端和 README。
+          - `.sha256` 文件用于校验发布包完整性。
+          "@
+          gh release view $version 2>$null
+          if ($LASTEXITCODE -ne 0) {
+            gh release create $version --title "OmniWatch SensorHost $version" --notes $notes
+          }
+          gh release upload $version $package "$package.sha256" --clobber
