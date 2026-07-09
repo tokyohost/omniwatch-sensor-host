@@ -131,12 +131,24 @@ internal sealed class SensorSnapshotService : IDisposable
             Name = cpuHardware.FirstOrDefault()?.Name,
             Percent = FindSensorValue(cpuSensors, SensorType.Load, "CPU Total")
                 ?? AverageSensorValue(cpuSensors, SensorType.Load, "CPU Core"),
-            FrequencyGhz = AverageSensorValue(cpuSensors, SensorType.Clock, "CPU Core") is { } mhz ? Math.Round(mhz / 1000.0, 2) : null,
+            FrequencyGhz = BuildCpuFrequencyGhz(cpuSensors),
             TemperatureC = FindFirstValue(cpuSensors, SensorType.Temperature, "CPU Package", "CPU Tctl/Tdie", "Core Max")
                 ?? AverageSensorValue(cpuSensors, SensorType.Temperature, "CPU Core"),
             PowerWatts = FindFirstValue(cpuSensors, SensorType.Power, "CPU Package", "Package"),
             SensorCount = sensors.Count(sensor => IsFinite(sensor.Value)),
         };
+    }
+
+    /// <summary>
+    /// 按优先级读取 CPU 频率并从 MHz 换算为 GHz。
+    /// </summary>
+    private static double? BuildCpuFrequencyGhz(IReadOnlyCollection<ISensor> cpuSensors)
+    {
+        var mhz = AverageSensorValue(cpuSensors, SensorType.Clock, "CPU Core")
+            ?? FindFirstValue(cpuSensors, SensorType.Clock, "Cores (Average)");
+        return mhz is { } value
+            ? Math.Round(value / 1000.0, 2)
+            : null;
     }
 
     /// <summary>
@@ -148,8 +160,8 @@ internal sealed class SensorSnapshotService : IDisposable
         return new MemorySnapshot
         {
             Percent = FindFirstValue(memorySensors, SensorType.Load, "Memory"),
-            UsedBytes = ToBytes(FindFirstValue(memorySensors, SensorType.Data, "Memory Used")),
-            AvailableBytes = ToBytes(FindFirstValue(memorySensors, SensorType.Data, "Memory Available")),
+            UsedBytes = GibibytesToBytes(FindFirstValue(memorySensors, SensorType.Data, "Memory Used")),
+            AvailableBytes = GibibytesToBytes(FindFirstValue(memorySensors, SensorType.Data, "Memory Available")),
             SensorCount = memorySensors.Count(sensor => IsFinite(sensor.Value)),
         };
     }
@@ -174,8 +186,8 @@ internal sealed class SensorSnapshotService : IDisposable
             CoreClockMhz = FindFirstValue(sensors, SensorType.Clock, "GPU Core"),
             MemoryClockMhz = FindFirstValue(sensors, SensorType.Clock, "GPU Memory"),
             PowerWatts = FindFirstValue(sensors, SensorType.Power, "GPU Package", "GPU Core"),
-            DedicatedMemoryUsedBytes = ToBytes(FindFirstValue(sensors, SensorType.SmallData, "GPU Memory Used")),
-            DedicatedMemoryTotalBytes = ToBytes(FindFirstValue(sensors, SensorType.SmallData, "GPU Memory Total")),
+            DedicatedMemoryUsedBytes = MebibytesToBytes(FindFirstValue(sensors, SensorType.SmallData, "GPU Memory Used")),
+            DedicatedMemoryTotalBytes = MebibytesToBytes(FindFirstValue(sensors, SensorType.SmallData, "GPU Memory Total")),
         };
     }
 
@@ -194,8 +206,8 @@ internal sealed class SensorSnapshotService : IDisposable
                     Name = item.Name,
                     TemperatureC = FindFirstValue(sensors, SensorType.Temperature, "Temperature"),
                     UsedSpacePercent = FindFirstValue(sensors, SensorType.Load, "Used Space"),
-                    ReadBytesPerSecond = ToBytes(FindFirstValue(sensors, SensorType.Throughput, "Read Rate")),
-                    WriteBytesPerSecond = ToBytes(FindFirstValue(sensors, SensorType.Throughput, "Write Rate")),
+                    ReadBytesPerSecond = ToNonNegativeInt64(FindFirstValue(sensors, SensorType.Throughput, "Read Rate")),
+                    WriteBytesPerSecond = ToNonNegativeInt64(FindFirstValue(sensors, SensorType.Throughput, "Write Rate")),
                     HealthPercent = FindFirstValue(sensors, SensorType.Level, "Remaining Life", "Available Spare"),
                 };
             })
@@ -297,18 +309,42 @@ internal sealed class SensorSnapshotService : IDisposable
     }
 
     /// <summary>
-    /// 把 LibreHardwareMonitor 的 GB/MB 近似数据转换为字节。
+    /// 把 LibreHardwareMonitor 的 GiB 数据转换为字节。
     /// </summary>
-    private static long? ToBytes(double? value)
+    private static long? GibibytesToBytes(double? value)
+    {
+        return MultiplyToNonNegativeInt64(value, 1024L * 1024 * 1024);
+    }
+
+    /// <summary>
+    /// 把 LibreHardwareMonitor 的 MiB 小数据转换为字节。
+    /// </summary>
+    private static long? MebibytesToBytes(double? value)
+    {
+        return MultiplyToNonNegativeInt64(value, 1024L * 1024);
+    }
+
+    /// <summary>
+    /// 把非负浮点值转换为 Int64。
+    /// </summary>
+    private static long? ToNonNegativeInt64(double? value)
+    {
+        return MultiplyToNonNegativeInt64(value, 1);
+    }
+
+    /// <summary>
+    /// 按指定倍率把非负浮点值转换为 Int64。
+    /// </summary>
+    private static long? MultiplyToNonNegativeInt64(double? value, long multiplier)
     {
         if (!IsFinite(value))
         {
             return null;
         }
 
-        var bytes = value.Value * 1024 * 1024 * 1024;
-        return double.IsFinite(bytes) && bytes is >= 0 and <= long.MaxValue
-            ? Convert.ToInt64(bytes)
+        var result = value.Value * multiplier;
+        return double.IsFinite(result) && result is >= 0 and <= long.MaxValue
+            ? Convert.ToInt64(result)
             : null;
     }
 

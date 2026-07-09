@@ -25,7 +25,7 @@ internal static class SensorUnits
             SensorType.Level => "%",
             SensorType.Power => "W",
             SensorType.Data => "GB",
-            SensorType.SmallData => "GB",
+            SensorType.SmallData => "MB",
             SensorType.Factor => "x",
             SensorType.Frequency => "Hz",
             SensorType.Throughput => "B/s",
