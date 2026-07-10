@@ -181,7 +181,7 @@ internal sealed class SensorSnapshotService : IDisposable
         return new GpuSnapshot
         {
             Name = gpuHardware.Name,
-            Percent = FindFirstValue(sensors, SensorType.Load, "GPU Core", "D3D 3D"),
+            Percent = BuildGpuLoadPercent(sensors),
             TemperatureC = FindFirstValue(sensors, SensorType.Temperature, "GPU Core", "GPU Hot Spot"),
             CoreClockMhz = FindFirstValue(sensors, SensorType.Clock, "GPU Core"),
             MemoryClockMhz = FindFirstValue(sensors, SensorType.Clock, "GPU Memory"),
@@ -189,6 +189,56 @@ internal sealed class SensorSnapshotService : IDisposable
             DedicatedMemoryUsedBytes = MebibytesToBytes(FindFirstValue(sensors, SensorType.SmallData, "GPU Memory Used")),
             DedicatedMemoryTotalBytes = MebibytesToBytes(FindFirstValue(sensors, SensorType.SmallData, "GPU Memory Total")),
         };
+    }
+
+    /// <summary>
+    /// 从 GPU 负载传感器候选中选择最大有效使用率。
+    /// </summary>
+    private static double? BuildGpuLoadPercent(IReadOnlyCollection<ISensor> sensors)
+    {
+        var candidates = sensors
+            .Where(sensor => sensor.SensorType == SensorType.Load && IsFinite(sensor.Value))
+            .Select(sensor => new
+            {
+                Value = Round(sensor.Value),
+                Score = GpuLoadSensorScore(sensor.Name),
+            })
+            .Where(item => item.Value.HasValue && item.Value.Value is >= 0 and <= 100 && item.Score >= 0)
+            .ToList();
+
+        return candidates.Count > 0
+            ? candidates.OrderByDescending(item => item.Value!.Value).ThenBy(item => item.Score).First().Value
+            : null;
+    }
+
+    /// <summary>
+    /// 按接近任务管理器 GPU 引擎利用率的程度给负载传感器打分。
+    /// </summary>
+    private static int GpuLoadSensorScore(string name)
+    {
+        if (name.Equals("D3D 3D", StringComparison.OrdinalIgnoreCase)
+            || name.Equals("3D", StringComparison.OrdinalIgnoreCase))
+        {
+            return 0;
+        }
+
+        if (ContainsAny(name, "D3D", "3D", "Compute", "Copy", "Video", "Render"))
+        {
+            return 1;
+        }
+
+        if (name.Equals("GPU Core", StringComparison.OrdinalIgnoreCase)
+            || name.Contains("GPU Core", StringComparison.OrdinalIgnoreCase))
+        {
+            return 2;
+        }
+
+        if (ContainsAny(name, "GPU Memory", "Memory Controller", "Bus Interface"))
+        {
+            return 3;
+        }
+
+        return name.StartsWith("GPU", StringComparison.OrdinalIgnoreCase) ? 4 : -1;
     }
 
     /// <summary>
@@ -256,6 +306,14 @@ internal sealed class SensorSnapshotService : IDisposable
     private static bool IsGpuHardware(IHardware hardware)
     {
         return hardware.HardwareType is HardwareType.GpuNvidia or HardwareType.GpuAmd or HardwareType.GpuIntel;
+    }
+
+    /// <summary>
+    /// 判断文本是否包含任一名称片段。
+    /// </summary>
+    private static bool ContainsAny(string text, params string[] values)
+    {
+        return values.Any(value => text.Contains(value, StringComparison.OrdinalIgnoreCase));
     }
 
     /// <summary>
