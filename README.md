@@ -39,9 +39,10 @@ dotnet run --project src\OmniWatch.SensorHost -- --pipe omniwatch.sensorhost
 响应示例：
 
 ```json
-{"ok":true,"data":{"version":1,"cpu":{"percent":12.3}}}
+{"ok":true,"data":{"version":1,"cpu":{"percent":12.3},"memory":{"physical":{"percent":79.92,"used_bytes":54835915653,"available_bytes":13776058778},"virtual":{"percent":74.05,"used_bytes":108780784189,"available_bytes":38117834752}}}}
 ```
 
+内存快照按 LibreHardwareMonitor 硬件节点拆分：`physical` 对应 `Total Memory`，`virtual` 对应 `Virtual Memory`。两组数据不会跨节点求和或相互替代。
 支持命令：
 
 - `ping`：返回宿主健康状态。

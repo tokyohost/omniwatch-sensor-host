@@ -98,6 +98,27 @@ internal sealed class CpuSnapshot
 internal sealed class MemorySnapshot
 {
     /// <summary>
+    /// 获取或初始化物理内存快照。
+    /// </summary>
+    public MemoryUsageSnapshot? Physical { get; init; }
+
+    /// <summary>
+    /// 获取或初始化虚拟内存快照。
+    /// </summary>
+    public MemoryUsageSnapshot? Virtual { get; init; }
+
+    /// <summary>
+    /// 获取或初始化有效传感器数量。
+    /// </summary>
+    public int SensorCount { get; init; }
+}
+
+/// <summary>
+/// 表示一种内存空间的使用情况。
+/// </summary>
+internal sealed class MemoryUsageSnapshot
+{
+    /// <summary>
     /// 获取或初始化内存使用率百分比。
     /// </summary>
     public double? Percent { get; init; }
@@ -111,11 +132,6 @@ internal sealed class MemorySnapshot
     /// 获取或初始化可用内存字节数。
     /// </summary>
     public long? AvailableBytes { get; init; }
-
-    /// <summary>
-    /// 获取或初始化有效传感器数量。
-    /// </summary>
-    public int SensorCount { get; init; }
 }
 
 /// <summary>

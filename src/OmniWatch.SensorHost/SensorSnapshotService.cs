@@ -43,7 +43,7 @@ internal sealed class SensorSnapshotService : IDisposable
             var sensors = hardware.SelectMany(item => item.Sensors).ToList();
 
             var cpu = BuildCpuSnapshot(hardware, sensors);
-            var memory = BuildMemorySnapshot(hardware, sensors);
+            var memory = BuildMemorySnapshot(hardware);
             var gpu = BuildGpuSnapshot(hardware);
             var disks = BuildDiskSnapshots(hardware);
             var power = BuildPowerSnapshot(cpu, gpu);
@@ -154,15 +154,57 @@ internal sealed class SensorSnapshotService : IDisposable
     /// <summary>
     /// 构建内存兼容快照片段。
     /// </summary>
-    private static MemorySnapshot BuildMemorySnapshot(IReadOnlyCollection<IHardware> hardware, IReadOnlyCollection<ISensor> sensors)
+    private static MemorySnapshot BuildMemorySnapshot(IReadOnlyCollection<IHardware> hardware)
     {
-        var memorySensors = hardware.Where(item => item.HardwareType == HardwareType.Memory).SelectMany(item => item.Sensors).ToList();
+        var memoryHardware = hardware.Where(item => item.HardwareType == HardwareType.Memory).ToList();
+        var physicalMemory = FindMemoryHardware(memoryHardware, "Total Memory", virtualMemory: false);
+        var virtualMemory = FindMemoryHardware(memoryHardware, "Virtual Memory", virtualMemory: true);
         return new MemorySnapshot
         {
-            Percent = FindFirstValue(memorySensors, SensorType.Load, "Memory"),
-            UsedBytes = GibibytesToBytes(FindFirstValue(memorySensors, SensorType.Data, "Memory Used")),
-            AvailableBytes = GibibytesToBytes(FindFirstValue(memorySensors, SensorType.Data, "Memory Available")),
-            SensorCount = memorySensors.Count(sensor => IsFinite(sensor.Value)),
+            Physical = BuildMemoryUsageSnapshot(physicalMemory),
+            Virtual = BuildMemoryUsageSnapshot(virtualMemory),
+            SensorCount = memoryHardware.SelectMany(item => item.Sensors).Count(sensor => IsFinite(sensor.Value)),
+        };
+    }
+
+    /// <summary>
+    /// 按硬件节点名称查找物理内存或虚拟内存，避免混用同名传感器。
+    /// </summary>
+    private static IHardware? FindMemoryHardware(
+        IReadOnlyCollection<IHardware> memoryHardware,
+        string preferredName,
+        bool virtualMemory)
+    {
+        var preferred = memoryHardware.FirstOrDefault(item =>
+            item.Name.Equals(preferredName, StringComparison.OrdinalIgnoreCase));
+        if (preferred is not null)
+        {
+            return preferred;
+        }
+
+        return memoryHardware.FirstOrDefault(item =>
+            item.Name.Contains("Virtual", StringComparison.OrdinalIgnoreCase) == virtualMemory
+            && item.Sensors.Any(sensor =>
+                sensor.SensorType == SensorType.Data
+                && sensor.Name.Equals("Memory Used", StringComparison.OrdinalIgnoreCase)));
+    }
+
+    /// <summary>
+    /// 从单个内存硬件节点构建使用情况，禁止跨节点合并同名传感器。
+    /// </summary>
+    private static MemoryUsageSnapshot? BuildMemoryUsageSnapshot(IHardware? hardware)
+    {
+        if (hardware is null)
+        {
+            return null;
+        }
+
+        var sensors = hardware.Sensors.ToList();
+        return new MemoryUsageSnapshot
+        {
+            Percent = FindFirstValue(sensors, SensorType.Load, "Memory"),
+            UsedBytes = GibibytesToBytes(FindFirstValue(sensors, SensorType.Data, "Memory Used")),
+            AvailableBytes = GibibytesToBytes(FindFirstValue(sensors, SensorType.Data, "Memory Available")),
         };
     }
 
